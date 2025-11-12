@@ -2,12 +2,12 @@
 set -Eeuo pipefail
 
 # ==========================================
-#  setup_basico_granxa_v2.2.sh
+#  setup_basico_granxa_v2.3.sh
 #  - Base Ubuntu Server para Granxa Pumar
 #  - Idempotente y con flags non-interactive
 #  - Docker + Compose, UFW, SSH endurecido
 #  - Tailscale, sysctl, unattended-upgrades
-#  - Coral PCIe (gasket-dkms + libedgetpu1-std)
+#  - Coral PCIe (opcional) -> ahora se puede saltar
 #  - Frigate DIR configurable, disco opcional
 # ==========================================
 
@@ -27,6 +27,9 @@ SET_TONI_PASS="S"          # pedir contraseña a 'toni' si falta
 
 TAILSCALE_AUTHKEY=""
 
+# Coral (NUEVO): permitir saltar la instalación
+SKIP_CORAL="N"             # S/N o yes/no
+
 # Frigate
 FRIGATE_DIR="/srv/media/frigate"
 DISK2_DEV=""               # ej. sdb o nvme1n1
@@ -35,7 +38,7 @@ FORCE_FORMAT="no"          # yes/no: solo si pasas --frigate-disk
 # ---------- Ayuda ----------
 print_help() {
   cat <<EOF
-Uso: sudo ./setup_basico_granxa_v2.2.sh [opciones]
+Uso: sudo ./setup_basico_granxa_v2.3.sh [opciones]
 
 Generales:
   --non-interactive            Ejecutar sin preguntas
@@ -50,6 +53,9 @@ Acceso y admin:
 
 Tailscale:
   --tailscale-authkey KEY      Auth key para alta automática (opcional)
+
+Coral:
+  --skip-coral yes|no          Saltar instalación de Coral/EDGETPU (default no)
 
 Frigate (ruta y disco de datos):
   --frigate-dir PATH           Ruta de datos de Frigate (default ${FRIGATE_DIR})
@@ -68,12 +74,14 @@ while [[ $# -gt 0 ]]; do
     --hostname) DEFAULT_HOSTNAME="$2"; shift 2;;
     --lan-cidr) LAN_CIDR="$2"; shift 2;;
 
-    --ssh-password) FORCE_SSH_PASSWORD=$([[ "$2" =~ ^(?i)(y|yes)$ ]] && echo "S" || echo "N"); shift 2;;
-    --set-toni-pass) SET_TONI_PASS=$([[ "$2" =~ ^(?i)(y|yes)$ ]] && echo "S" || echo "N"); shift 2;;
+    --ssh-password) FORCE_SSH_PASSWORD=$([[ "$2" =~ ^(?i)(y|yes|s|si)$ ]] && echo "S" || echo "N"); shift 2;;
+    --set-toni-pass) SET_TONI_PASS=$([[ "$2" =~ ^(?i)(y|yes|s|si)$ ]] && echo "S" || echo "N"); shift 2;;
     --cockpit) INSTALL_COCKPIT=$([[ "$2" =~ ^(?i)(y|yes|s|si)$ ]] && echo "S" || echo "N"); shift 2;;
     --netdata) INSTALL_NETDATA=$([[ "$2" =~ ^(?i)(y|yes|s|si)$ ]] && echo "S" || echo "N"); shift 2;;
 
     --tailscale-authkey) TAILSCALE_AUTHKEY="$2"; shift 2;;
+
+    --skip-coral) SKIP_CORAL=$([[ "$2" =~ ^(?i)(y|yes|s|si)$ ]] && echo "S" || echo "N"); shift 2;;
 
     --frigate-dir) FRIGATE_DIR="$2"; shift 2;;
     --frigate-disk) DISK2_DEV="$2"; shift 2;;
@@ -99,11 +107,15 @@ if [[ "$NON_INTERACTIVE" != "true" ]]; then
   read -rp "Ruta de Frigate [${FRIGATE_DIR}]: " FRIGATE_DIR_IN
   FRIGATE_DIR=${FRIGATE_DIR_IN:-$FRIGATE_DIR}
 
-  read -rp "¿Preparar un disco para Frigate ahora? (vacío para omitir, ej. sdb o nvme1n1): " DISK2_DEV_IN
+  echo "La ruta de Frigate quedará en: ${FRIGATE_DIR}"
+  read -rp "¿Preparar un disco para montar en esa ruta ahora? (vacío para omitir, ej. sdb o nvme1n1): " DISK2_DEV_IN
   DISK2_DEV=${DISK2_DEV:-$DISK2_DEV_IN}
   if [[ -n "$DISK2_DEV" ]]; then
     read -rp "Si no es ext4, ¿forzar formateo? [y/N]: " FF; [[ "${FF:-N}" =~ ^[Yy]$ ]] && FORCE_FORMAT="yes" || FORCE_FORMAT="no"
   fi
+
+  read -rp "¿Saltar instalación de Coral ahora? (recomendado S si dio error antes) [S/n]: " SKIP_CORAL_IN
+  SKIP_CORAL=${SKIP_CORAL_IN:-S}
 
   read -rp "¿Configurar contraseña para 'toni'? [S/n]: " SET_TONI_PASS_IN; SET_TONI_PASS=${SET_TONI_PASS_IN:-$SET_TONI_PASS}
   if [[ "$SET_TONI_PASS" =~ ^[Ss]$ ]]; then
@@ -121,7 +133,7 @@ else
 fi
 
 if [[ "$(id -u)" -ne 0 ]]; then
-  echo "Ejecuta como root: sudo ./setup_basico_granxa_v2.2.sh"
+  echo "Ejecuta como root: sudo ./setup_basico_granxa_v2.3.sh"
   exit 1
 fi
 
@@ -129,6 +141,7 @@ echo "==> Hostname: ${NEW_HOSTNAME:-$DEFAULT_HOSTNAME}"
 echo "==> LAN CIDR: ${LAN_CIDR:-none}"
 echo "==> Frigate DIR: ${FRIGATE_DIR}"
 echo "==> Disco Frigate: ${DISK2_DEV:-omitido} | force-format: ${FORCE_FORMAT}"
+echo "==> Saltar Coral: ${SKIP_CORAL}"
 
 # ---------- Hostname y zona horaria ----------
 hostnamectl set-hostname "${NEW_HOSTNAME:-$DEFAULT_HOSTNAME}"
@@ -172,7 +185,7 @@ if [[ "$SET_TONI_PASS" =~ ^[Ss]$ && -n "${P1:-}" ]]; then
   echo "toni:${P1}" | chpasswd
 fi
 
-# Claves SSH para toni si no existen (opcional, no obliga a usarlas)
+# Claves SSH para toni si no existen (opcional)
 if [[ ! -f /home/toni/.ssh/authorized_keys ]]; then
   mkdir -p /home/toni/.ssh
   chmod 700 /home/toni/.ssh
@@ -226,6 +239,8 @@ sysctl --system
 curl -fsSL https://tailscale.com/install.sh | sh
 if [[ -n "$TAILSCALE_AUTHKEY" ]]; then
   tailscale up --authkey="$TAILSCALE_AUTHKEY" --ssh || true
+else
+  echo "[INFO] Tailscale instalado. Ejecuta 'sudo tailscale up --ssh' para iniciar sesión."
 fi
 
 # ---------- UFW ----------
@@ -277,20 +292,25 @@ fi
 
 systemctl restart ssh || systemctl restart sshd || true
 
-# ---------- Coral PCIe ----------
-# Repo Coral
-if [[ ! -f /etc/apt/sources.list.d/coral-edgetpu.list ]]; then
-  echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" \
+# ---------- Coral PCIe (OPCIONAL / SALTAR) ----------
+if [[ "$SKIP_CORAL" =~ ^[SsYy]$ ]]; then
+  echo "[INFO] Saltando instalación de Coral (gasket-dkms/libedgetpu1-std)."
+else
+  # Repo Coral con keyrings (evita apt-key deprecated)
+  if [[ ! -f /etc/apt/keyrings/coral.gpg ]]; then
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/coral.gpg
+  fi
+  echo "deb [signed-by=/etc/apt/keyrings/coral.gpg] https://packages.cloud.google.com/apt coral-edgetpu-stable main" \
     > /etc/apt/sources.list.d/coral-edgetpu.list
-  curl -fSsL https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - >/dev/null 2>&1 || true
-fi
-apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y gasket-dkms libedgetpu1-std
-
-# Carga módulo y verificación
-modprobe gasket || true
-if ! lsmod | grep -q -E "gasket|apex"; then
-  echo "[WARN] Módulo Coral no cargado. Comprueba secure boot y reinicia si es necesario."
+  apt-get update || true
+  # Puede fallar en kernels nuevos; no bloqueamos el resto del setup
+  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y gasket-dkms libedgetpu1-std; then
+    echo "[WARN] Falló la instalación de Coral. Lo dejamos pendiente para más tarde."
+  else
+    modprobe gasket || true
+    modprobe apex || true
+  fi
 fi
 
 # ---------- Frigate: ruta y posible disco ----------
@@ -354,7 +374,7 @@ systemctl enable --now smartd || true
 # ---------- Resumen ----------
 echo
 echo "==========================================="
-echo "  Setup básico v2.2 completado"
+echo "  Setup básico v2.3 completado"
 echo "==========================================="
 echo "Hostname: $(hostname)"
 timedatectl | sed -n 's/^[[:space:]]*Time zone: //p'
@@ -363,10 +383,10 @@ docker compose version || true
 echo "UFW:"; ufw status verbose || true
 echo "Frigate DIR: ${FRIGATE_DIR} (montado: $(mountpoint -q "$FRIGATE_DIR" && echo SI || echo NO))"
 echo "Discos:"; df -h | grep -E '/$|'"$FRIGATE_DIR" || true
-echo "Coral módulos:"; lsmod | grep -E 'gasket|apex' || true
+echo "Coral módulos:"; lsmod | grep -E 'gasket|apex' || echo "Coral no instalada o módulos no cargados (saltado)"
 echo
 echo "Siguientes pasos:"
-echo "1) tailscale up   # si no iniciaste con authkey"
+echo "1) tailscale up --ssh    # si no iniciaste con authkey"
 echo "2) Prueba SSH por Tailscale y desactiva contraseña si no hace falta."
-echo "3) Prepara tu compose para Frigate apuntando a ${FRIGATE_DIR}."
+echo "3) Cuando quieras, intentamos Coral de nuevo (drivers para tu kernel)."
 echo "Log: $LOG_FILE"
