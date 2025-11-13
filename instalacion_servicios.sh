@@ -109,9 +109,9 @@ EOF
 
 # -------- 7) Mosquitto (conf + passwd) --------
 MOSQ_DIR="${COMPOSE_DIR}/mosquitto"
-mkdir -p "${MOSQ_DIR}"
+mkdir -p "${MOSQ_DIR}/config" "${MOSQ_DIR}/data"
 
-MOSQ_CONF="${MOSQ_DIR}/mosquitto.conf"
+MOSQ_CONF="${MOSQ_DIR}/config/mosquitto.conf"
 echo "➡️  Escribiendo ${MOSQ_CONF}..."
 cat > "${MOSQ_CONF}" <<'EOF'
 persistence true
@@ -123,18 +123,17 @@ log_type notice
 
 listener 1883
 allow_anonymous false
-password_file /mosquitto/passwd
+password_file /mosquitto/config/passwd
 EOF
 
 echo "➡️  Creando fichero de contraseñas de Mosquitto..."
-# Nos aseguramos de que 'passwd' sea un fichero, no un directorio
-rm -rf "${MOSQ_DIR}/passwd"
-touch "${MOSQ_DIR}/passwd"
-
 docker run --rm \
   -v "${MOSQ_DIR}:/mosquitto" \
   eclipse-mosquitto:2 \
-  mosquitto_passwd -b /mosquitto/passwd "${MQTT_USER}" "${MQTT_PASS}"
+  mosquitto_passwd -b /mosquitto/config/passwd "${MQTT_USER}" "${MQTT_PASS}"
+
+# (Opcional) ajustar permisos para quitar warnings futuros
+chmod 600 "${MOSQ_DIR}/config/passwd" || true
 
 # -------- 8) Frigate config con 3 cámaras y go2rtc --------
 FRIGATE_CFG="${COMPOSE_DIR}/frigate/config/config.yml"
@@ -223,7 +222,7 @@ RUN apk add --no-cache curl ca-certificates bash \
  && curl -fsSL -o /usr/local/bin/supercronic https://github.com/aptible/supercronic/releases/download/v0.2.4/supercronic-linux-amd64 \
  && chmod +x /usr/local/bin/supercronic
 WORKDIR /app
-CMD ["supercronic", "-timezone", "${TZ}", "/app/crontab"]
+CMD ["supercronic", "/app/crontab"]
 EOF
 
 cat > "${COMPOSE_DIR}/jobs/crontab" <<'EOF'
@@ -265,8 +264,8 @@ services:
     container_name: mosquitto
     networks: [granxa]
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/mosquitto.conf:ro
-      - ./mosquitto/passwd:/mosquitto/passwd:ro
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/config/passwd:/mosquitto/config/passwd:ro
       - ../data/mosquitto:/mosquitto/data
     ports:
       - "1883:1883"
@@ -371,7 +370,7 @@ services:
     restart: unless-stopped
 
   compreface-api:
-    image: exadel/compreface-api:0.7.1
+    image: exadel/compreface-api:1.2.0
     container_name: compreface-api
     networks: [granxa]
     environment:
@@ -383,12 +382,12 @@ services:
       compreface-postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8000/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
       <<: *default-health
     restart: unless-stopped
 
   compreface-core:
-    image: exadel/compreface-core:0.7.1
+    image: exadel/compreface-core:1.2.0
     container_name: compreface-core
     networks: [granxa]
     environment:
@@ -399,7 +398,7 @@ services:
     restart: unless-stopped
 
   compreface-fe:
-    image: exadel/compreface-fe:0.7.1
+    image: exadel/compreface-fe:1.2.0
     container_name: compreface-fe
     networks: [granxa]
     ports:
