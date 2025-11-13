@@ -109,6 +109,8 @@ EOF
 
 # -------- 7) Mosquitto (conf + passwd) --------
 MOSQ_DIR="${COMPOSE_DIR}/mosquitto"
+mkdir -p "${MOSQ_DIR}"
+
 MOSQ_CONF="${MOSQ_DIR}/mosquitto.conf"
 echo "➡️  Escribiendo ${MOSQ_CONF}..."
 cat > "${MOSQ_CONF}" <<'EOF'
@@ -125,11 +127,12 @@ password_file /mosquitto/passwd
 EOF
 
 echo "➡️  Creando fichero de contraseñas de Mosquitto..."
-# Aseguramos que exista la carpeta
-mkdir -p "${MOSQ_DIR}"
-# Montamos SOLO el fichero passwd dentro del contenedor
+# Nos aseguramos de que 'passwd' sea un fichero, no un directorio
+rm -rf "${MOSQ_DIR}/passwd"
+touch "${MOSQ_DIR}/passwd"
+
 docker run --rm \
-  -v "${MOSQ_DIR}/passwd:/mosquitto/passwd" \
+  -v "${MOSQ_DIR}:/mosquitto" \
   eclipse-mosquitto:2 \
   mosquitto_passwd -b /mosquitto/passwd "${MQTT_USER}" "${MQTT_PASS}"
 
