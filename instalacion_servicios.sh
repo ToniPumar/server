@@ -23,7 +23,7 @@ echo "VARIABLES REQUERIDAS EN EL .env (si lo usas):"
 echo
 echo "  TZ                      Zona horaria.        Ej: Europe/Madrid"
 echo "  PUID, PGID              UID/GID de archivos. Ej: 1000, 1000"
-echo "  MQTT_USER, MQTT_PASS    Usuario/clave MQTT   Ej: toni, hola"
+echo "  MQTT_USER, MQTT_PASS    Usuario/clave MQTT   Ej: toni, churrasco"
 echo "  FRIGATE_MEDIA           Ruta datos Frigate   Ej: /srv/media/frigate"
 echo "  PLATE_RECOGNIZER_TOKEN  Token ALPR (opcional, vacío si no)"
 echo "  CAMERA_USER, CAMERA_PASS Credenciales cámaras RTSP (globales)"
@@ -109,8 +109,6 @@ EOF
 
 # -------- 7) Mosquitto (conf + passwd) --------
 MOSQ_DIR="${COMPOSE_DIR}/mosquitto"
-mkdir -p "${MOSQ_DIR}"
-
 MOSQ_CONF="${MOSQ_DIR}/mosquitto.conf"
 echo "➡️  Escribiendo ${MOSQ_CONF}..."
 cat > "${MOSQ_CONF}" <<'EOF'
@@ -123,14 +121,17 @@ log_type notice
 
 listener 1883
 allow_anonymous false
-password_file /mosquitto/config/passwd
+password_file /mosquitto/passwd
 EOF
 
-PASSWD_FILE="${MOSQ_DIR}/passwd"
-echo "➡️  Creando fichero de contraseñas de Mosquitto en ${PASSWD_FILE}..."
-docker run --rm -v "${MOSQ_DIR}:/mosquitto" eclipse-mosquitto:2 \
+echo "➡️  Creando fichero de contraseñas de Mosquitto..."
+# Aseguramos que exista la carpeta
+mkdir -p "${MOSQ_DIR}"
+# Montamos SOLO el fichero passwd dentro del contenedor
+docker run --rm \
+  -v "${MOSQ_DIR}/passwd:/mosquitto/passwd" \
+  eclipse-mosquitto:2 \
   mosquitto_passwd -b /mosquitto/passwd "${MQTT_USER}" "${MQTT_PASS}"
-chown "${PUID}:${PGID}" "${PASSWD_FILE}" || true
 
 # -------- 8) Frigate config con 3 cámaras y go2rtc --------
 FRIGATE_CFG="${COMPOSE_DIR}/frigate/config/config.yml"
@@ -261,8 +262,8 @@ services:
     container_name: mosquitto
     networks: [granxa]
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/mosquitto.conf:/mosquitto/mosquitto.conf:ro
+      - ./mosquitto/passwd:/mosquitto/passwd:ro
       - ../data/mosquitto:/mosquitto/data
     ports:
       - "1883:1883"
