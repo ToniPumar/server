@@ -11,17 +11,16 @@ set -Eeuo pipefail
 # - Cámaras:
 #     192.168.80.100 -> cam robot frontal
 #     192.168.80.101 -> cam zona técnica robot
-#     192.168.80.103 -> cam amamantadora Lely Calm
+#     192.168.80.103 -> cam exterior
 # ============================================================
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.env"
 
-# -------- 1) Variables requeridas y confirmación --------
 echo "======================================"
 echo "VARIABLES REQUERIDAS EN EL .env (si lo usas):"
 echo
-echo "  TZ                      Zona horaria.        Ej: Europe/Madrid"
+echo "  TZ                      Zona horaria. Ej: Europe/Madrid"
 echo "  PUID, PGID              UID/GID de archivos. Ej: 1000, 1000"
 echo "  MQTT_USER, MQTT_PASS    Usuario/clave MQTT   Ej: toni, churrasco"
 echo "  FRIGATE_MEDIA           Ruta datos Frigate   Ej: /srv/media/frigate"
@@ -31,7 +30,6 @@ echo "======================================"
 read -r -p "¿Continuar? (s/n): " CONT1
 [[ "$CONT1" =~ ^[Ss]$ ]] || { echo "Cancelado."; exit 1; }
 
-# -------- 2) Defaults por si no hay .env o decides no cargarlo --------
 TZ="${TZ:-Europe/Madrid}"
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
@@ -42,14 +40,12 @@ PLATE_RECOGNIZER_TOKEN="${PLATE_RECOGNIZER_TOKEN:-}"
 CAMERA_USER="${CAMERA_USER:-admin}"
 CAMERA_PASS="${CAMERA_PASS:-changeme}"
 
-# -------- 3) Ofrecer cargar .env si existe junto al script --------
 if [[ -f "$ENV_FILE" ]]; then
   echo "🔎 Encontrado .env en: $ENV_FILE"
   read -r -p "¿Cargar este .env? (s/n): " LOADENV
   if [[ "$LOADENV" =~ ^[Ss]$ ]]; then
     echo "📦 Cargando variables del .env..."
     set -a
-    # shellcheck disable=SC1090
     source "$ENV_FILE"
     set +a
   else
@@ -59,7 +55,6 @@ else
   echo "⚠️  No hay .env junto al script. Se usarán valores por defecto o de entorno."
 fi
 
-# -------- 4) Mostrar valores finales y pedir confirmación --------
 echo "======================================"
 echo "VALORES FINALES QUE SE USARÁN:"
 echo "  TZ=$TZ"
@@ -75,7 +70,6 @@ echo "======================================"
 read -r -p "¿Deseas continuar con estas variables? (s/n): " CONT2
 [[ "$CONT2" =~ ^[Ss]$ ]] || { echo "Cancelado."; exit 1; }
 
-# -------- 5) Comprobaciones previas --------
 command -v docker >/dev/null || { echo "❌ Docker no está instalado"; exit 1; }
 command -v docker compose >/dev/null || { echo "❌ Falta docker compose"; exit 1; }
 
@@ -85,14 +79,13 @@ DATA_DIR="${BASE}/data"
 
 echo "➡️  Creando estructura de carpetas..."
 mkdir -p \
-  "${COMPOSE_DIR}/"{frigate/config,go2rtc,mosquitto,nodered,compreface,redis,homeassistant,jobs,alpr} \
+  "${COMPOSE_DIR}/"{frigate/config,go2rtc,mosquitto/config,nodered,compreface,redis,homeassistant,jobs,alpr} \
   "${DATA_DIR}/"{mosquitto,nodered,compreface/postgres,redis,homeassistant,jobs,alpr} \
   "${FRIGATE_MEDIA}"
 
 echo "➡️  Ajustando permisos a ${PUID}:${PGID}..."
 chown -R "${PUID}:${PGID}" "${BASE}" "${FRIGATE_MEDIA}" || true
 
-# -------- 6) Generar .env para docker compose (en /opt/granxa/compose) --------
 COMPOSE_ENV="${COMPOSE_DIR}/.env"
 echo "➡️  Generando ${COMPOSE_ENV}..."
 cat > "${COMPOSE_ENV}" <<EOF
@@ -126,11 +119,10 @@ allow_anonymous false
 password_file /mosquitto/config/passwd
 EOF
 
-echo "➡️  Creando fichero de contraseñas de Mosquitto (en el host)..."
-
-# Nos aseguramos de tener mosquitto_passwd instalado en el host
+echo "➡️  Creando fichero de contraseñas de Mosquitto..."
+# Asegurarse de que mosquitto_passwd está disponible en el host
 if ! command -v mosquitto_passwd >/dev/null 2>&1; then
-  echo "   mosquitto_passwd no encontrado, instalando mosquitto-clients..."
+  echo "   mosquitto_passwd no encontrado; instalando mosquitto-clients..."
   apt-get update && apt-get install -y mosquitto-clients
 fi
 
@@ -139,7 +131,7 @@ touch "${PASSFILE}"
 mosquitto_passwd -b "${PASSFILE}" "${MQTT_USER}" "${MQTT_PASS}"
 chmod 600 "${PASSFILE}"
 
-# -------- 8) Frigate config con 3 cámaras y go2rtc --------
+# -------- 8) Frigate config con cámaras --------
 FRIGATE_CFG="${COMPOSE_DIR}/frigate/config/config.yml"
 echo "➡️  Escribiendo config de Frigate en ${FRIGATE_CFG}..."
 cat > "${FRIGATE_CFG}" <<'EOF'
@@ -154,7 +146,6 @@ detectors:
     type: edgetpu
     device: pci
 
-# Streams definidos en go2rtc para no sobrecargar cámaras
 go2rtc:
   streams:
     robot_frontal_main: rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.100:554/Streaming/Channels/101
@@ -163,8 +154,8 @@ go2rtc:
     robot_zonatecnica_main: rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.101:554/Streaming/Channels/101
     robot_zonatecnica_sub:  rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.101:554/Streaming/Channels/102
 
-    calm_amamantadora_main: rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.103:554/Streaming/Channels/101
-    calm_amamantadora_sub:  rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.103:554/Streaming/Channels/102
+    exterior_main: rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.103:554/Streaming/Channels/101
+    exterior_sub:  rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.103:554/Streaming/Channels/102
 
 cameras:
   camera_robot_frontal:
@@ -195,12 +186,12 @@ cameras:
     live:
       enabled: true
 
-  camera_calm_amamantadora:
+  camera_exterior:
     ffmpeg:
       inputs:
-        - path: rtsp://go2rtc:8554/calm_amamantadora_sub
+        - path: rtsp://go2rtc:8554/exterior_sub
           roles: [detect]
-        - path: rtsp://go2rtc:8554/calm_amamantadora_main
+        - path: rtsp://go2rtc:8554/exterior_main
           roles: [record]
     detect:
       width: 1280
@@ -230,7 +221,6 @@ CMD ["supercronic", "/app/crontab"]
 EOF
 
 cat > "${COMPOSE_DIR}/jobs/crontab" <<'EOF'
-# min hora dia mes dow  comando
 5 * * * * node /app/hourly-task.js >> /app/jobs.log 2>&1
 0 3 * * * truncate -s 0 /app/jobs.log
 EOF
@@ -246,7 +236,7 @@ EOF
   chown -R "${PUID}:${PGID}" "${DATA_DIR}/jobs" || true
 fi
 
-# -------- 10) docker-compose.yml completo --------
+# -------- 10) docker-compose.yml --------
 DC_FILE="${COMPOSE_DIR}/docker-compose.yml"
 echo "➡️  Generando ${DC_FILE}..."
 cat > "${DC_FILE}" <<'EOF'
@@ -455,7 +445,6 @@ services:
     environment:
       - TZ=${TZ}
       - TOKEN=${PLATE_RECOGNIZER_TOKEN}
-      # - MODEL_COUNTRY=eu
     volumes:
       - ../data/alpr:/var/lib/plate-recognizer
     ports:
