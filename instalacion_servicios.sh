@@ -126,14 +126,18 @@ allow_anonymous false
 password_file /mosquitto/config/passwd
 EOF
 
-echo "➡️  Creando fichero de contraseñas de Mosquitto..."
-docker run --rm \
-  -v "${MOSQ_DIR}:/mosquitto" \
-  eclipse-mosquitto:2 \
-  mosquitto_passwd -b /mosquitto/config/passwd "${MQTT_USER}" "${MQTT_PASS}"
+echo "➡️  Creando fichero de contraseñas de Mosquitto (en el host)..."
 
-# (Opcional) ajustar permisos para quitar warnings futuros
-chmod 600 "${MOSQ_DIR}/config/passwd" || true
+# Nos aseguramos de tener mosquitto_passwd instalado en el host
+if ! command -v mosquitto_passwd >/dev/null 2>&1; then
+  echo "   mosquitto_passwd no encontrado, instalando mosquitto-clients..."
+  apt-get update && apt-get install -y mosquitto-clients
+fi
+
+PASSFILE="${MOSQ_DIR}/config/passwd"
+touch "${PASSFILE}"
+mosquitto_passwd -b "${PASSFILE}" "${MQTT_USER}" "${MQTT_PASS}"
+chmod 600 "${PASSFILE}"
 
 # -------- 8) Frigate config con 3 cámaras y go2rtc --------
 FRIGATE_CFG="${COMPOSE_DIR}/frigate/config/config.yml"
