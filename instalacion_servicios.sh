@@ -108,7 +108,10 @@ CAMERA_PASS=${CAMERA_PASS}
 EOF
 
 # -------- 7) Mosquitto (conf + passwd) --------
-MOSQ_CONF="${COMPOSE_DIR}/mosquitto/mosquitto.conf"
+MOSQ_DIR="${COMPOSE_DIR}/mosquitto"
+mkdir -p "${MOSQ_DIR}"
+
+MOSQ_CONF="${MOSQ_DIR}/mosquitto.conf"
 echo "➡️  Escribiendo ${MOSQ_CONF}..."
 cat > "${MOSQ_CONF}" <<'EOF'
 persistence true
@@ -123,9 +126,11 @@ allow_anonymous false
 password_file /mosquitto/config/passwd
 EOF
 
-echo "➡️  Creando fichero de contraseñas de Mosquitto..."
-docker run --rm -v "${COMPOSE_DIR}/mosquitto:/mosquitto" eclipse-mosquitto:2 \
-  mosquitto_passwd -b /mosquitto/config/passwd "${MQTT_USER}" "${MQTT_PASS}"
+PASSWD_FILE="${MOSQ_DIR}/passwd"
+echo "➡️  Creando fichero de contraseñas de Mosquitto en ${PASSWD_FILE}..."
+docker run --rm -v "${MOSQ_DIR}:/mosquitto" eclipse-mosquitto:2 \
+  mosquitto_passwd -b /mosquitto/passwd "${MQTT_USER}" "${MQTT_PASS}"
+chown "${PUID}:${PGID}" "${PASSWD_FILE}" || true
 
 # -------- 8) Frigate config con 3 cámaras y go2rtc --------
 FRIGATE_CFG="${COMPOSE_DIR}/frigate/config/config.yml"
@@ -262,7 +267,7 @@ services:
     ports:
       - "1883:1883"
     healthcheck:
-      test: ["CMD", "mosquitto_pub", "-h", "localhost", -t, "health", -m, "ok"]
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "health", "-m", "ok"]
       <<: *default-health
     restart: unless-stopped
 
