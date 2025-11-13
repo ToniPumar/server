@@ -17,10 +17,11 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.env"
 
+# -------- 1) Variables requeridas y confirmación --------
 echo "======================================"
 echo "VARIABLES REQUERIDAS EN EL .env (si lo usas):"
 echo
-echo "  TZ                      Zona horaria. Ej: Europe/Madrid"
+echo "  TZ                      Zona horaria.        Ej: Europe/Madrid"
 echo "  PUID, PGID              UID/GID de archivos. Ej: 1000, 1000"
 echo "  MQTT_USER, MQTT_PASS    Usuario/clave MQTT   Ej: toni, churrasco"
 echo "  FRIGATE_MEDIA           Ruta datos Frigate   Ej: /srv/media/frigate"
@@ -30,6 +31,7 @@ echo "======================================"
 read -r -p "¿Continuar? (s/n): " CONT1
 [[ "$CONT1" =~ ^[Ss]$ ]] || { echo "Cancelado."; exit 1; }
 
+# -------- 2) Defaults por si no hay .env o decides no cargarlo --------
 TZ="${TZ:-Europe/Madrid}"
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
@@ -40,12 +42,14 @@ PLATE_RECOGNIZER_TOKEN="${PLATE_RECOGNIZER_TOKEN:-}"
 CAMERA_USER="${CAMERA_USER:-admin}"
 CAMERA_PASS="${CAMERA_PASS:-changeme}"
 
+# -------- 3) Ofrecer cargar .env si existe junto al script --------
 if [[ -f "$ENV_FILE" ]]; then
   echo "🔎 Encontrado .env en: $ENV_FILE"
   read -r -p "¿Cargar este .env? (s/n): " LOADENV
   if [[ "$LOADENV" =~ ^[Ss]$ ]]; then
     echo "📦 Cargando variables del .env..."
     set -a
+    # shellcheck disable=SC1090
     source "$ENV_FILE"
     set +a
   else
@@ -55,6 +59,7 @@ else
   echo "⚠️  No hay .env junto al script. Se usarán valores por defecto o de entorno."
 fi
 
+# -------- 4) Mostrar valores finales y pedir confirmación --------
 echo "======================================"
 echo "VALORES FINALES QUE SE USARÁN:"
 echo "  TZ=$TZ"
@@ -70,6 +75,7 @@ echo "======================================"
 read -r -p "¿Deseas continuar con estas variables? (s/n): " CONT2
 [[ "$CONT2" =~ ^[Ss]$ ]] || { echo "Cancelado."; exit 1; }
 
+# -------- 5) Comprobaciones previas --------
 command -v docker >/dev/null || { echo "❌ Docker no está instalado"; exit 1; }
 command -v docker compose >/dev/null || { echo "❌ Falta docker compose"; exit 1; }
 
@@ -79,13 +85,14 @@ DATA_DIR="${BASE}/data"
 
 echo "➡️  Creando estructura de carpetas..."
 mkdir -p \
-  "${COMPOSE_DIR}/"{frigate/config,go2rtc,mosquitto/config,nodered,compreface,redis,homeassistant,jobs,alpr} \
+  "${COMPOSE_DIR}/"{frigate/config,go2rtc,mosquitto,nodered,compreface,redis,homeassistant,jobs,alpr} \
   "${DATA_DIR}/"{mosquitto,nodered,compreface/postgres,redis,homeassistant,jobs,alpr} \
   "${FRIGATE_MEDIA}"
 
 echo "➡️  Ajustando permisos a ${PUID}:${PGID}..."
 chown -R "${PUID}:${PGID}" "${BASE}" "${FRIGATE_MEDIA}" || true
 
+# -------- 6) Generar .env para docker compose (en /opt/granxa/compose) --------
 COMPOSE_ENV="${COMPOSE_DIR}/.env"
 echo "➡️  Generando ${COMPOSE_ENV}..."
 cat > "${COMPOSE_ENV}" <<EOF
@@ -119,11 +126,11 @@ allow_anonymous false
 password_file /mosquitto/config/passwd
 EOF
 
-echo "➡️  Creando fichero de contraseñas de Mosquitto..."
-# Asegurarse de que mosquitto_passwd está disponible en el host
+echo "➡️  Creando fichero de contraseñas de Mosquitto (en el host)..."
+
 if ! command -v mosquitto_passwd >/dev/null 2>&1; then
-  echo "   mosquitto_passwd no encontrado; instalando mosquitto-clients..."
-  apt-get update && apt-get install -y mosquitto-clients
+  echo "   mosquitto_passwd no encontrado; instalando paquete mosquitto..."
+  apt-get update && apt-get install -y mosquitto
 fi
 
 PASSFILE="${MOSQ_DIR}/config/passwd"
@@ -131,7 +138,7 @@ touch "${PASSFILE}"
 mosquitto_passwd -b "${PASSFILE}" "${MQTT_USER}" "${MQTT_PASS}"
 chmod 600 "${PASSFILE}"
 
-# -------- 8) Frigate config con cámaras --------
+# -------- 8) Frigate config con 3 cámaras y go2rtc --------
 FRIGATE_CFG="${COMPOSE_DIR}/frigate/config/config.yml"
 echo "➡️  Escribiendo config de Frigate en ${FRIGATE_CFG}..."
 cat > "${FRIGATE_CFG}" <<'EOF'
@@ -146,6 +153,7 @@ detectors:
     type: edgetpu
     device: pci
 
+# Streams definidos en go2rtc para no sobrecargar cámaras
 go2rtc:
   streams:
     robot_frontal_main: rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.100:554/Streaming/Channels/101
@@ -209,23 +217,13 @@ snapshots:
     default: 3
 EOF
 
-# -------- 9) Node Jobs (cron) --------
-echo "➡️  Preparando contenedor Node Jobs (cron cada hora)..."
-cat > "${COMPOSE_DIR}/jobs/Dockerfile" <<'EOF'
-FROM node:20-alpine
-RUN apk add --no-cache curl ca-certificates bash \
- && curl -fsSL -o /usr/local/bin/supercronic https://github.com/aptible/supercronic/releases/download/v0.2.4/supercronic-linux-amd64 \
- && chmod +x /usr/local/bin/supercronic
-WORKDIR /app
-CMD ["supercronic", "/app/crontab"]
-EOF
+# -------- 9) Node Jobs (sin supercronic, solo Node) --------
+echo "➡️  Preparando Node Jobs (tarea horaria en Node.js)..."
 
-cat > "${COMPOSE_DIR}/jobs/crontab" <<'EOF'
-5 * * * * node /app/hourly-task.js >> /app/jobs.log 2>&1
-0 3 * * * truncate -s 0 /app/jobs.log
-EOF
+JOBS_DIR="${DATA_DIR}/jobs"
+mkdir -p "${JOBS_DIR}"
 
-JOB_SCRIPT="${DATA_DIR}/jobs/hourly-task.js"
+JOB_SCRIPT="${JOBS_DIR}/hourly-task.js"
 if [[ ! -f "${JOB_SCRIPT}" ]]; then
   echo "➡️  Creando script ejemplo de tarea horaria en ${JOB_SCRIPT}..."
   cat > "${JOB_SCRIPT}" <<'EOF'
@@ -233,10 +231,30 @@ if [[ ! -f "${JOB_SCRIPT}" ]]; then
 console.log(new Date().toISOString(), "Job horario OK");
 // Aquí puedes poner tu lógica: limpieza, backup, sincronización, etc.
 EOF
-  chown -R "${PUID}:${PGID}" "${DATA_DIR}/jobs" || true
 fi
 
-# -------- 10) docker-compose.yml --------
+RUNNER_SCRIPT="${JOBS_DIR}/hourly-runner.js"
+cat > "${RUNNER_SCRIPT}" <<'EOF'
+// /opt/granxa/data/jobs/hourly-runner.js
+// Ejecuta hourly-task.js ahora y luego cada hora.
+
+function runTask() {
+  try {
+    console.log(new Date().toISOString(), "Lanzando tarea horaria...");
+    delete require.cache[require.resolve('./hourly-task.js')];
+    require('./hourly-task.js');
+  } catch (e) {
+    console.error(new Date().toISOString(), "Error en tarea horaria:", e);
+  }
+}
+
+runTask();
+setInterval(runTask, 60 * 60 * 1000);
+EOF
+
+chown -R "${PUID}:${PGID}" "${JOBS_DIR}" || true
+
+# -------- 10) docker-compose.yml completo --------
 DC_FILE="${COMPOSE_DIR}/docker-compose.yml"
 echo "➡️  Generando ${DC_FILE}..."
 cat > "${DC_FILE}" <<'EOF'
@@ -422,17 +440,18 @@ services:
     restart: unless-stopped
 
   node-jobs:
-    build:
-      context: ./jobs
+    image: node:20-alpine
     container_name: node-jobs
     networks: [granxa]
     environment:
       - TZ=${TZ}
     user: "${PUID}:${PGID}"
+    working_dir: /app
     volumes:
       - ../data/jobs:/app
+    command: ["node", "hourly-runner.js"]
     healthcheck:
-      test: ["CMD", "sh", "-c", "test -e /app/crontab"]
+      test: ["CMD", "test", "-f", "/app/hourly-runner.js"]
       <<: *default-health
     restart: unless-stopped
 
@@ -445,6 +464,7 @@ services:
     environment:
       - TZ=${TZ}
       - TOKEN=${PLATE_RECOGNIZER_TOKEN}
+      # - MODEL_COUNTRY=eu
     volumes:
       - ../data/alpr:/var/lib/plate-recognizer
     ports:
@@ -500,4 +520,4 @@ echo "  docker compose --profile alpr up -d"
 echo
 echo "Node Jobs:"
 echo "- Edita: ${DATA_DIR}/jobs/hourly-task.js"
-echo "- Logs:  ${DATA_DIR}/jobs/jobs.log"
+echo "- Logs:  ${DATA_DIR}/jobs/jobs.log (si lo usas dentro de la tarea)"
