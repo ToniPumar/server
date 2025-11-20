@@ -147,21 +147,21 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: mosquitto
+    ports:
+      - "1883:1883"
     volumes:
       - ./mosquitto/config:/mosquitto/config
       - ../data/mosquitto:/mosquitto/data
-    ports:
-      - "1883:1883"
     restart: unless-stopped
 
   go2rtc:
     image: alexxit/go2rtc:latest
     container_name: go2rtc
-    volumes:
-      - ./frigate/config:/config
     ports:
       - "1984:1984"
       - "8554:8554"
+    volumes:
+      - ./go2rtc:/config
     restart: unless-stopped
 
   frigate:
@@ -172,11 +172,11 @@ services:
     devices:
       - /dev/apex_0:/dev/apex_0
       - /dev/dri:/dev/dri
+    ports:
+      - "5000:5000"
     volumes:
       - ./frigate/config:/config
       - ${FRIGATE_MEDIA}:/media/frigate
-    ports:
-      - "5000:5000"
     restart: unless-stopped
 
   redis:
@@ -189,11 +189,10 @@ services:
   nodered:
     image: nodered/node-red:3.1
     container_name: nodered
-    user: "${PUID}:${PGID}"
-    volumes:
-      - ../data/nodered:/data
     ports:
       - "1880:1880"
+    volumes:
+      - ../data/nodered:/data
     restart: unless-stopped
 
   compreface-postgres:
@@ -217,18 +216,31 @@ services:
     ports:
       - "8080:8080"
     restart: unless-stopped
+    depends_on:
+      - compreface-postgres
 
   compreface-core:
     image: exadel/compreface-core:1.2.0
     container_name: compreface-core
+    restart: unless-stopped
     depends_on:
       - compreface-api
+
+  compreface-ui:
+    image: exadel/compreface-ui:1.2.0
+    container_name: compreface-ui
+    ports:
+      - "8000:8000"
     restart: unless-stopped
+    depends_on:
+      - compreface-core
+      - compreface-api
 
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:stable
     container_name: homeassistant
-    network_mode: host
+    ports:
+      - "8123:8123"
     volumes:
       - ../data/homeassistant:/config
     restart: unless-stopped
