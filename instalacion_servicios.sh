@@ -226,11 +226,11 @@ services:
     depends_on:
       - compreface-api
 
-  compreface-ui:
-    image: exadel/compreface-ui:1.2.0
-    container_name: compreface-ui
+   compreface-fe:
+    image: exadel/compreface-fe:1.2.0
+    container_name: compreface-fe
     ports:
-      - "8000:8000"
+      - "8000:80"        # el contenedor escucha en 80, lo exponemos como 8000 fuera
     restart: unless-stopped
     depends_on:
       - compreface-core
