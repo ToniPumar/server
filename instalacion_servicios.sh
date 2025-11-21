@@ -94,55 +94,6 @@ EOF
 # -------- Frigate config --------
 FRIGATE_CFG="$COMPOSE_DIR/frigate/config/config.yml"
 cat > "$FRIGATE_CFG" <<EOF
-mqtt:
-  host: mosquitto
-  user: ${MQTT_USER}
-  password: ${MQTT_PASS}
-
-detectors:
-  coral:
-    type: edgetpu
-    device: pci
-
-go2rtc:
-  streams:
-    robot_frontal_main: rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.100:554/Streaming/Channels/101
-    robot_frontal_sub:  rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.100:554/Streaming/Channels/102
-
-    robot_zonatecnica_main: rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.101:554/Streaming/Channels/101
-    robot_zonatecnica_sub:  rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.101:554/Streaming/Channels/102
-
-    exterior_main: rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.103:554/Streaming/Channels/101
-    exterior_sub:  rtsp://${CAMERA_USER}:${CAMERA_PASS}@192.168.80.103:554/Streaming/Channels/102
-
-cameras:
-  camera_exterior:
-    ffmpeg:
-      inputs:
-        - path: rtsp://go2rtc:8554/exterior_sub
-          roles: [detect]
-        - path: rtsp://go2rtc:8554/exterior_main
-          roles: [record]
-    detect:
-      width: 1920
-      height: 1080
-      fps: 5
-EOF
-
-# -------- Node Jobs --------
-cat > "$COMPOSE_DIR/jobs/Dockerfile" <<'EOF'
-FROM node:20-alpine
-RUN apk add --no-cache bash curl
-WORKDIR /app
-CMD ["node", "/app/hourly-task.js"]
-EOF
-
-cat > "$DATA_DIR/jobs/hourly-task.js" <<'EOF'
-console.log(new Date().toISOString(), "Tarea horaria ejecutada");
-EOF
-
-# -------- docker-compose.yml --------
-cat > "$COMPOSE_DIR/docker-compose.yml" <<'EOF'
 services:
   mosquitto:
     image: eclipse-mosquitto:2
@@ -226,11 +177,11 @@ services:
     depends_on:
       - compreface-api
 
-   compreface-fe:
+  compreface-fe:
     image: exadel/compreface-fe:1.2.0
     container_name: compreface-fe
     ports:
-      - "8000:80"        # el contenedor escucha en 80, lo exponemos como 8000 fuera
+      - "8000:8000"
     restart: unless-stopped
     depends_on:
       - compreface-core
